@@ -1,0 +1,6 @@
+[
+  {"id": "fde", "label": "Forward Deployed Engineer"},
+  {"id": "data_scientist", "label": "Data Scientist"},
+  {"id": "swe", "label": "Software Engineer"},
+  {"id": "nlp", "label": "NLP / ML Engineer"}
+]
