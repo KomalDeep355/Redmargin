@@ -109,7 +109,7 @@ def build_plan(matrix: list[dict], signals: dict[str, Signal], hours_per_day: fl
             continue
         reason = f"{row['postings_mentioning']} of {row['total_postings']} postings mention {row['label']}; the repo shows no evidence"
         if row["fix_id"]:
-            _bump(row["fix_id"], row["pct"], reason)
+            _bump(row["fix_id"], (row["pct"] or 0) * row.get("role_weight", 1.0), reason)
         else:
             unaddressed.append({"label": row["label"], "pct": row["pct"], "reason": reason})
 

@@ -89,7 +89,14 @@ def test_sample_postings_do_not_feed_market_skill_percentages(monkeypatch):
     monkeypatch.setattr("app.reviewer.fetch_snapshot", fake_fetch)
     context = asyncio.run(prepare_analysis("https://github.com/a/b", "fde"))
     assert context["postings_meta"]["using_sample_postings"]
+    assert context["matrix"]
     assert all(row["total_postings"] == 0 for row in context["matrix"])
+    assert all(row["pct"] is None and row["status"] == "market_unavailable" for row in context["matrix"])
+
+    data_scientist = asyncio.run(prepare_analysis("https://github.com/a/b", "data_scientist"))
+    assert {row["id"] for row in context["matrix"]} != {
+        row["id"] for row in data_scientist["matrix"]
+    }
 
 
 def test_prompt_content_is_untrusted_and_file_excerpt_budgeted(monkeypatch):
@@ -328,7 +335,16 @@ def test_critique_counts_findings_separately_from_strengths_and_falls_back(monke
 
     monkeypatch.setattr("app.reviewer.llm.complete_json", fake_complete)
     snap = make_snapshot()
-    critique = asyncio.run(generate_critique(snap, "Engineer", {}, [], {}, 0))
+    matrix = [{
+        "id": "testing",
+        "label": "Automated testing",
+        "total_postings": 1,
+        "postings_mentioning": 1,
+        "pct": 1.0,
+        "evidence": [],
+        "status": "gap",
+    }]
+    critique = asyncio.run(generate_critique(snap, "Engineer", {}, matrix, {}, 1))
     assert critique["evidence_check"]["findings_total"] == 1
     assert critique["evidence_check"]["findings_kept"] == 1
     assert critique["evidence_check"]["strengths_total"] == 1
@@ -340,7 +356,9 @@ def test_critique_counts_findings_separately_from_strengths_and_falls_back(monke
 
     monkeypatch.setattr("app.reviewer.llm.complete_json", fail_complete)
     fallback = asyncio.run(
-        generate_critique(snap, "Engineer", {}, [], {"total_hours_min": 0, "total_hours_max": 0}, 0)
+        generate_critique(
+            snap, "Engineer", {}, matrix, {"total_hours_min": 0, "total_hours_max": 0}, 1
+        )
     )
     assert fallback["source"] == "rule-based (LLM failed)"
     assert fallback["llm_error"] == "The LLM request timed out."
@@ -515,7 +533,8 @@ def test_health_roles_and_review_work_in_mock_mode(monkeypatch):
     result = asyncio.run(main.review(ReviewRequest(repo_url="https://github.com/owner/repo")))
     assert result["repo"]["full_name"] == "owner/repo"
     assert result["postings"]["using_sample_postings"]
-    assert result["critique"]["source"] == "rule-based (no LLM configured)"
+    assert result["critique"]["source"] == "rule-based (no real postings)"
+    assert "market demand could not be assessed" in result["critique"]["summary"]
 
 
 def test_feature_endpoints_are_wired_with_typed_responses(monkeypatch):

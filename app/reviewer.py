@@ -81,8 +81,31 @@ def rule_based_critique(role_label: str, signals: dict[str, Signal], matrix: lis
                           "detail": f"Mentioned in {row['postings_mentioning']} of {row['total_postings']} postings.",
                           "evidence": row["evidence"][:2]})
     gaps = sum(1 for r in matrix if r["status"] == "gap")
-    summary = (f"For {role_label}, {gaps} in-demand skill(s) have no matching evidence in this repo. "
-               f"Closing the listed fixes is roughly {plan['total_hours_min']}-{plan['total_hours_max']} hours of work.")
+    market_available = any(
+        r.get("total_postings", 0) > 0
+        and r.get("pct") is not None
+        and r.get("postings_mentioning", 0) > 0
+        for r in matrix
+    )
+    if market_available:
+        summary = (
+            f"For {role_label}, {gaps} in-demand skill(s) have no matching "
+            f"evidence in this repo. Closing the listed fixes is roughly "
+            f"{plan['total_hours_min']}-{plan['total_hours_max']} hours of work."
+        )
+    elif any(r.get("total_postings", 0) > 0 for r in matrix):
+        summary = (
+            f"For {role_label}, real job postings were available, but none "
+            "matched the configured role skills. Market-based skill gaps "
+            "and demand estimates could not be assessed."
+        )
+    else:
+        summary = (
+            f"For {role_label}, market demand could not be assessed because "
+            "no real job postings were available. Repository evidence can "
+            "still support technical findings, but market-based skill gaps "
+            "and demand estimates are unavailable."
+        )
     return {"summary": summary, "findings": findings, "strengths": strengths}
 
 
@@ -90,6 +113,29 @@ async def generate_critique(snap: RepoSnapshot, role_label: str, signals, matrix
     tree = set(snap.tree)
     signal_names = set(signals)
     skill_ids = {r["id"] for r in matrix}
+
+    market_skill_data_available = total_postings > 0 and any(
+        row.get("postings_mentioning", 0) > 0 and row.get("pct") is not None
+        for row in matrix
+    )
+    if not market_skill_data_available:
+        base = rule_based_critique(role_label, signals, matrix, plan)
+        return {
+            **base,
+            "source": (
+                "rule-based (no real postings)"
+                if total_postings == 0
+                else "rule-based (no matched role skills)"
+            ),
+            "llm_error": None,
+            "evidence_check": {
+                "findings_total": len(base["findings"]),
+                "findings_kept": len(base["findings"]),
+                "strengths_total": len(base["strengths"]),
+                "strengths_kept": len(base["strengths"]),
+                "dropped": 0,
+            },
+        }
 
     source, llm_error, raw = "llm", None, None
     try:
@@ -136,7 +182,9 @@ async def prepare_analysis(repo_url: str, role_id: str, pasted_postings: list[st
     snap = await fetch_snapshot(repo_url)
     signals = compute_signals(snap)
     real_postings = [posting for posting in postings if not posting.is_sample]
-    matrix = build_skill_matrix(snap, signals, [posting.text for posting in real_postings])
+    matrix = build_skill_matrix(
+        snap, signals, [posting.text for posting in real_postings], role_id
+    )
     return {
         "role": role,
         "postings": postings,
