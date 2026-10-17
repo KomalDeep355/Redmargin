@@ -20,6 +20,7 @@ uvicorn app.main:app --reload
 ```
 
 Open http://127.0.0.1:8000. Run tests with `python -m pytest`.
+GitHub Actions runs the test suite on Python 3.11 and 3.14 for pushes and pull requests.
 
 ## Deploy on Render
 
@@ -44,6 +45,9 @@ URLs must be HTTPS links directly to `github.com/owner/repository`.
 - `data/postings/*/sample-*.txt` are **synthetic test data**. The UI warns you while they are in use. Replace them with
   10–15 real postings per role (or paste postings in the form, separated by a line with `---`).
 - Synthetic postings are disclosed but excluded from role-skill market percentages.
+- Each role in `data/roles.json` has a scoped skill list and provisional priority weights. These editorial weights affect
+  fix ranking and the transparent skill-evidence rubric; they are not learned from a dataset. The score is withheld
+  until real postings provide matched role-skill evidence.
 - Skill findings describe detectable evidence in the inspected repository only; skills such as customer communication
   that cannot be inferred from source are marked not assessed.
 - Fix hours in `data/fix_library.json` are rough defaults, not predictions. Edit them to match your experience.
@@ -83,11 +87,25 @@ tests/test_core.py
 - **New repo check:** add one `_add(...)` line in `signals.py`; add a row to `HYGIENE` in `planner.py` if it should
   produce a fix.
 - **New fix:** add it to `data/fix_library.json` and point a skill's `fix_id` at it.
-- **New role:** add it to `data/roles.json` and create `data/postings/<id>/`.
+- **New role:** add it to `data/roles.json` with `skill_weights` keyed by IDs from `data/skills.json`, then create
+  `data/postings/<id>/`. Role weights must be between 0 and 1 and are initial review priorities, not trained parameters.
 - **Evidence-backed features:** interview and resume outputs validate citations against readable repository files.
   The judge endpoint reports estimates and uses a deterministic evidence heuristic when model generation is off or fails.
 
-## Future work
+## Dataset and evaluation
 
-Partner job-data providers should be implemented in a separate integration layer. Evaluation could hand-label real
-gaps in ~10 repos and report how often the reviewer finds them.
+The dataset tooling supports CSV ingestion, deterministic company-grouped splits, an
+offline multi-label skill-extraction baseline, silver labels for exploration, and a
+human-labelled repository-signal evaluation workflow. No real corpus is bundled: the
+sample postings are synthetic, and an exploratory baseline has been run locally on
+ignored data, but no trained model artifact is included or integrated and no validated
+benchmark result is published. Silver labels are not ground truth. See
+[dataset/README.md](dataset/README.md) for baseline results, the license-aware workflow,
+training commands, gold labelling, and evaluation guidance.
+Keep downloaded and generated data out of Git unless redistribution is explicitly
+permitted.
+
+The app already integrates an optional LLM agent for evidence-cited explanations; its
+numeric scores remain deterministic and the mock/rule-based path works without a model.
+The offline skill extractor is an experiment, not an app dependency. Before promoting a
+trained model, validate it against an independent, human-labelled repository benchmark.
