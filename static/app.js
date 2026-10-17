@@ -25,14 +25,19 @@ function chips(list) {
 function renderMatrix(rows) {
   const head = `<div class="g-row g-head" role="row"><span>SKILL / REQUIREMENT</span><span>SHARE OF POSTINGS</span><span>IN REPO?</span><span>RECEIPTS</span></div>`;
   const body = (rows || []).map((r) => {
-    const pct = Math.max(0, Math.min(100, Math.round(Number(r.pct || 0) * 100)));
+    const marketAvailable = Number(r.total_postings) > 0;
+    const pct = marketAvailable ? Math.max(0, Math.min(100, Math.round(Number(r.pct || 0) * 100))) : 0;
     let mark = '<span class="mark no" title="No evidence found in the inspected repository" aria-label="No evidence found">✕</span>';
     if (!r.detectable) mark = '<span class="mark na" title="Cannot be judged from code alone" aria-label="Needs human review">CHECK</span>';
     else if (r.in_repo) mark = '<span class="mark yes" title="Evidence found" aria-label="Evidence found">✓</span>';
     const evidence = r.detectable ? ((r.evidence || []).join(", ") || "No matching evidence found") : "Review the write-up or demo manually";
+    const priority = Math.round(Number(r.role_weight || 0) * 100);
+    const market = marketAvailable
+      ? `<div class="bar" aria-label="${pct}% of postings mention this skill"><span style="width:${pct}%"></span></div><span class="bar-label">${esc(r.postings_mentioning)} of ${esc(r.total_postings)} postings · ${pct}%</span>`
+      : '<span class="bar-label">No real posting data</span>';
     return `<div class="g-row" role="row">
-      <span>${esc(r.label)}</span>
-      <span><div class="bar" aria-label="${pct}% of postings mention this skill"><span style="width:${pct}%"></span></div><span class="bar-label">${esc(r.postings_mentioning ?? 0)} of ${esc(r.total_postings ?? 0)} postings · ${pct}%</span></span>
+      <span>${esc(r.label)}<span class="bar-label">Role priority: ${priority}%</span></span>
+      <span>${market}</span>
       <span>${mark}</span>
       <span class="ev">${esc(evidence)}</span>
     </div>`;
@@ -74,16 +79,21 @@ function renderSignals(signals) {
   }).join("") || '<li>No repository checks were returned.</li>';
 }
 
-// Transparent UI-only heuristic: 70% of the score comes from detectable skill evidence,
-// 30% from repository signals. It is NOT a hiring prediction or a measure of the person.
+// Transparent UI-only heuristic. It is NOT a hiring prediction or a measure of the person.
 function calculateEvidenceScore(data) {
-  const rows = (data.skill_matrix || []).filter((r) => r.detectable);
+  const rows = (data.skill_matrix || []).filter(
+    (r) => r.detectable && Number(r.total_postings) > 0 && Number(r.postings_mentioning) > 0
+  );
   const signals = data.signals || [];
-  const skillScore = rows.length ? rows.filter((r) => r.in_repo).length / rows.length : null;
-  const signalScore = signals.length ? signals.filter((s) => s.value === s.good_when_true).length / signals.length : null;
-  if (skillScore === null && signalScore === null) return null;
-  const weights = (skillScore !== null ? 0.7 : 0) + (signalScore !== null ? 0.3 : 0);
-  const score = ((skillScore ?? 0) * (skillScore !== null ? 0.7 : 0) + (signalScore ?? 0) * (signalScore !== null ? 0.3 : 0)) / weights;
+  if (!rows.length || !signals.length) return null;
+  const totalRoleWeight = rows.reduce((sum, row) => sum + Number(row.role_weight || 1), 0);
+  if (!totalRoleWeight) return null;
+  const skillScore = rows.reduce(
+    (sum, row) => sum + (row.in_repo ? Number(row.role_weight || 1) : 0),
+    0
+  ) / totalRoleWeight;
+  const signalScore = signals.filter((s) => s.value === s.good_when_true).length / signals.length;
+  const score = skillScore * 0.7 + signalScore * 0.3;
   return Math.round(score * 100) / 10;
 }
 
@@ -103,7 +113,10 @@ function render(data) {
   const repo = data.repo || {};
   const role = data.role || {};
   const filesRead = (repo.files_read || []).length;
-  $("repoMeta").innerHTML = `<a href="${esc(repo.url || "#")}" target="_blank" rel="noopener noreferrer">${esc(repo.full_name || repo.url || "Repository")}</a> reviewed for <b>${esc(role.label || "selected role")}</b> against ${esc(data.postings?.count ?? 0)} posting(s). Files read: ${filesRead}.${repo.tree_truncated ? " The repository file list was truncated by GitHub." : ""}`;
+  const realPostingCount = Number(data.postings?.evidence_count ?? 0);
+  const samplePostingCount = Number(data.postings?.sample_count ?? 0);
+  const postingSummary = `${realPostingCount} real posting(s)${samplePostingCount ? `; ${samplePostingCount} synthetic sample(s) excluded` : ""}`;
+  $("repoMeta").innerHTML = `<a href="${esc(repo.url || "#")}" target="_blank" rel="noopener noreferrer">${esc(repo.full_name || repo.url || "Repository")}</a> reviewed for <b>${esc(role.label || "selected role")}</b> against ${postingSummary}. Files read: ${filesRead}.${repo.tree_truncated ? " The repository file list was truncated by GitHub." : ""}`;
   $("summary").textContent = data.critique?.summary || "The review is complete. Check the evidence and notes below before deciding what to change.";
   const evidenceCheck = data.critique?.evidence_check || {};
   $("source").textContent = `Explanation source: ${data.critique?.source || "not specified"}. Checkable findings retained: ${evidenceCheck.findings_kept ?? "—"} of ${evidenceCheck.findings_total ?? "—"}.${data.critique?.llm_error ? " Model note: " + data.critique.llm_error : ""}`;
@@ -117,7 +130,17 @@ function render(data) {
   const comment = scoreComment(score);
   $("scoreNumber").innerHTML = score === null ? `—<span>/10</span>` : `${score.toFixed(1)}<span>/10</span>`;
   $("scoreSticker").textContent = comment.sticker;
-  $("scoreExplanation").textContent = `${comment.explanation} Score rubric: 70% detectable skill evidence + 30% repository checks. This is a simple UI heuristic, not an employer rating.`;
+  if (score === null) {
+    const hasRealPostings = Number(data.postings?.evidence_count) > 0;
+    const hasMarketSkillMatches = (data.skill_matrix || []).some(
+      (row) => row.detectable && Number(row.total_postings) > 0 && Number(row.postings_mentioning) > 0
+    );
+    $("scoreExplanation").textContent = hasRealPostings && !hasMarketSkillMatches
+      ? "No score: the real postings did not match the configured role skills, so a role-specific comparison is not available. Repository checks remain visible below."
+      : "No score: real job-posting evidence is needed for this role. Synthetic samples and repository hygiene alone cannot support a role-specific score.";
+  } else {
+    $("scoreExplanation").textContent = `${comment.explanation} Score rubric: 70% role-weighted evidence for skills mentioned in real postings + 30% repository checks. This is a simple UI heuristic, not an employer rating.`;
+  }
   $("results").hidden = false;
 }
 
