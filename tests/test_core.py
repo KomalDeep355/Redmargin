@@ -95,16 +95,20 @@ def test_skill_dependencies_match_manifest_package_names():
         },
     )
     matrix = {row["id"]: row for row in build_skill_matrix(
-        snap, compute_signals(snap), ["React, scikit-learn, and FastAPI"]
+        snap, compute_signals(snap), ["React and FastAPI"], "swe"
+    )}
+    nlp_matrix = {row["id"]: row for row in build_skill_matrix(
+        snap, compute_signals(snap), ["scikit-learn"], "nlp"
     )}
     assert matrix["frontend"]["status"] == "strength"
-    assert matrix["ml_frameworks"]["status"] == "strength"
     assert matrix["rest_apis"]["status"] == "gap"
+    assert nlp_matrix["ml_frameworks"]["status"] == "strength"
+    assert "ml_frameworks" not in matrix and "frontend" not in nlp_matrix
 
 
 def test_not_detectable_skill_is_not_reported_as_missing():
     snap = make_snap([], {})
-    rows = build_skill_matrix(snap, compute_signals(snap), ["customer communication"])
+    rows = build_skill_matrix(snap, compute_signals(snap), ["customer communication"], "fde")
     customer_skill = next(row for row in rows if row["id"] == "customer_communication")
     assert customer_skill["status"] == "not_detectable"
     assert not customer_skill["evidence"]
@@ -127,6 +131,27 @@ def test_rule_based_gap_is_framed_as_missing_repository_evidence():
     )
     assert result["findings"][0]["title"].startswith("No repository evidence found")
     assert "does not establish whether the candidate has the skill" in result["findings"][0]["detail"]
+    assert "1 in-demand skill(s)" in result["summary"]
+
+
+def test_rule_based_summary_discloses_unavailable_market_data():
+    result = rule_based_critique(
+        "Data Scientist",
+        {},
+        [{
+            "id": "statistics_experimentation",
+            "label": "Statistics / experimentation",
+            "status": "market_unavailable",
+            "pct": None,
+            "postings_mentioning": 0,
+            "total_postings": 0,
+            "evidence": [],
+        }],
+        {"total_hours_min": 0, "total_hours_max": 0},
+    )
+
+    assert "market demand could not be assessed" in result["summary"]
+    assert "market-based skill gaps" in result["summary"]
 
 
 def test_matrix_gap_strength_and_plan():
@@ -135,7 +160,7 @@ def test_matrix_gap_strength_and_plan():
     snap = make_snap(tree, files)
     sig = compute_signals(snap)
     postings = ["Python, FastAPI, Docker and pytest testing", "REST APIs, Docker, testing", "Docker, python"]
-    matrix = {r["id"]: r for r in build_skill_matrix(snap, sig, postings)}
+    matrix = {r["id"]: r for r in build_skill_matrix(snap, sig, postings, "swe")}
     assert matrix["rest_apis"]["status"] == "strength"
     assert matrix["docker"]["status"] == "gap" and matrix["docker"]["pct"] == 1.0
     assert matrix["testing"]["status"] == "gap"

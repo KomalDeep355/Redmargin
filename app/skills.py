@@ -10,6 +10,7 @@ import xml.etree.ElementTree as ET
 
 from . import config
 from .github_client import RepoSnapshot
+from .postings import get_role
 from .signals import Signal
 
 GAP_MIN_PCT = 0.25  # a skill is a "gap" if >=25% of postings mention it and the repo shows nothing
@@ -301,11 +302,43 @@ def repo_evidence(skill: dict, corpus: _Corpus, signals: dict[str, Signal]) -> l
     return out[:4]
 
 
-_STATUS_ORDER = {"gap": 0, "minor_gap": 1, "strength": 2, "not_detectable": 3, "extra": 4}
+_STATUS_ORDER = {
+    "gap": 0,
+    "minor_gap": 1,
+    "strength": 2,
+    "not_detectable": 3,
+    "market_unavailable": 4,
+    "not_mentioned": 5,
+    "extra": 6,
+}
 
 
-def build_skill_matrix(snap: RepoSnapshot, signals: dict[str, Signal], posting_texts: list[str]) -> list[dict]:
-    taxonomy = load_taxonomy()
+def build_skill_matrix(
+    snap: RepoSnapshot,
+    signals: dict[str, Signal],
+    posting_texts: list[str],
+    role_id: str,
+) -> list[dict]:
+    role = get_role(role_id)
+    skill_weights = role.get("skill_weights")
+    if not isinstance(skill_weights, dict) or not skill_weights:
+        raise ValueError(f"Role '{role_id}' has no configured skill weights.")
+
+    taxonomy_by_id = {skill["id"]: skill for skill in load_taxonomy()}
+    unknown_skills = set(skill_weights) - taxonomy_by_id.keys()
+    if unknown_skills:
+        raise ValueError(
+            f"Role '{role_id}' references unknown skill(s): {', '.join(sorted(unknown_skills))}."
+        )
+    for skill_id, weight in skill_weights.items():
+        if (
+            not isinstance(weight, (int, float))
+            or isinstance(weight, bool)
+            or not 0 < weight <= 1
+        ):
+            raise ValueError(f"Role '{role_id}' has an invalid weight for skill '{skill_id}'.")
+
+    taxonomy = [taxonomy_by_id[skill_id] for skill_id in skill_weights]
     total = len(posting_texts)
     mentions = count_mentions(taxonomy, posting_texts)
     corpus = _Corpus(snap)
@@ -313,29 +346,33 @@ def build_skill_matrix(snap: RepoSnapshot, signals: dict[str, Signal], posting_t
     rows = []
     for sk in taxonomy:
         n = mentions[sk["id"]]
-        pct = n / total if total else 0.0
+        pct = n / total if total else None
         detectable = sk.get("detectable", True)
         evidence = repo_evidence(sk, corpus, signals) if detectable else []
         in_repo = bool(evidence)
-        if n == 0 and not in_repo:
-            continue
 
-        if not detectable:
+        if total == 0:
+            status = "market_unavailable"
+        elif not detectable:
             status = "not_detectable"
         elif n > 0 and in_repo:
             status = "strength"
-        elif pct >= GAP_MIN_PCT and not in_repo:
+        elif n > 0 and pct >= GAP_MIN_PCT and not in_repo:
             status = "gap"
         elif n > 0:
             status = "minor_gap"
-        else:
+        elif in_repo:
             status = "extra"
+        else:
+            status = "not_mentioned"
 
         rows.append({
             "id": sk["id"], "label": sk["label"], "postings_mentioning": n, "total_postings": total,
-            "pct": round(pct, 3), "in_repo": in_repo, "evidence": evidence,
+            "pct": round(pct, 3) if pct is not None else None,
+            "role_weight": skill_weights[sk["id"]],
+            "in_repo": in_repo, "evidence": evidence,
             "detectable": detectable, "status": status, "fix_id": sk.get("fix_id"),
         })
 
-    rows.sort(key=lambda r: (_STATUS_ORDER[r["status"]], -r["pct"], r["label"]))
+    rows.sort(key=lambda r: (_STATUS_ORDER[r["status"]], -(r["pct"] or 0), r["label"]))
     return rows
