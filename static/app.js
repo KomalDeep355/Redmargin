@@ -1,5 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+let latestRedmarginReview = null;
 
 async function loadRoles() {
   try {
@@ -25,16 +26,22 @@ function chips(list) {
 function renderMatrix(rows) {
   const head = `<div class="g-row g-head" role="row"><span>SKILL / REQUIREMENT</span><span>SHARE OF POSTINGS</span><span>IN REPO?</span><span>RECEIPTS</span></div>`;
   const body = (rows || []).map((r) => {
-    const marketAvailable = Number(r.total_postings) > 0;
+    const minimumPostings = Number(r.minimum_postings_for_market_assessment || 10);
+    const marketAvailable = r.market_status !== "insufficient_market_data"
+      && Number(r.total_postings) >= minimumPostings;
     const pct = marketAvailable ? Math.max(0, Math.min(100, Math.round(Number(r.pct || 0) * 100))) : 0;
     let mark = '<span class="mark no" title="No evidence found in the inspected repository" aria-label="No evidence found">✕</span>';
     if (!r.detectable) mark = '<span class="mark na" title="Cannot be judged from code alone" aria-label="Needs human review">CHECK</span>';
     else if (r.in_repo) mark = '<span class="mark yes" title="Evidence found" aria-label="Evidence found">✓</span>';
-    const evidence = r.detectable ? ((r.evidence || []).join(", ") || "No matching evidence found") : "Review the write-up or demo manually";
+    const evidence = r.evidence_status === "not_assessed"
+      ? "Not assessed from repository contents; review the write-up or demo manually"
+      : r.evidence_status === "no_evidence_found"
+        ? "No matching evidence found in inspected files"
+        : (r.evidence || []).join(", ") || "Evidence found";
     const priority = Math.round(Number(r.role_weight || 0) * 100);
     const market = marketAvailable
       ? `<div class="bar" aria-label="${pct}% of postings mention this skill"><span style="width:${pct}%"></span></div><span class="bar-label">${esc(r.postings_mentioning)} of ${esc(r.total_postings)} postings · ${pct}%</span>`
-      : '<span class="bar-label">No real posting data</span>';
+      : `<span class="bar-label">${esc(r.total_postings)} real posting(s); insufficient market data (at least ${minimumPostings} needed)</span>`;
     return `<div class="g-row" role="row">
       <span>${esc(r.label)}<span class="bar-label">Role priority: ${priority}%</span></span>
       <span>${market}</span>
@@ -79,26 +86,8 @@ function renderSignals(signals) {
   }).join("") || '<li>No repository checks were returned.</li>';
 }
 
-// Transparent UI-only heuristic. It is NOT a hiring prediction or a measure of the person.
-function calculateEvidenceScore(data) {
-  const rows = (data.skill_matrix || []).filter(
-    (r) => r.detectable && Number(r.total_postings) > 0 && Number(r.postings_mentioning) > 0
-  );
-  const signals = data.signals || [];
-  if (!rows.length || !signals.length) return null;
-  const totalRoleWeight = rows.reduce((sum, row) => sum + Number(row.role_weight || 1), 0);
-  if (!totalRoleWeight) return null;
-  const skillScore = rows.reduce(
-    (sum, row) => sum + (row.in_repo ? Number(row.role_weight || 1) : 0),
-    0
-  ) / totalRoleWeight;
-  const signalScore = signals.filter((s) => s.value === s.good_when_true).length / signals.length;
-  const score = skillScore * 0.7 + signalScore * 0.3;
-  return Math.round(score * 100) / 10;
-}
-
 function scoreComment(score) {
-  if (score === null) return { sticker: "NO SCORE YET", explanation: "Not enough checkable data was returned to calculate a score." };
+  if (score == null) return { sticker: "NOT ENOUGH EVIDENCE", explanation: "No detectable role skills were assessed in the inspected files." };
   if (score >= 9) return { sticker: "A+ ENERGY ✳", explanation: "Strong evidence coverage in this review. Keep checking the depth and quality of the implementation." };
   if (score >= 7.5) return { sticker: "SOLID DRAFT", explanation: "Good evidence in several areas, with a few marks still in the margin." };
   if (score >= 5.5) return { sticker: "PROMISING, REVISE", explanation: "Some useful evidence is here. Focus on the highest-priority gaps first." };
@@ -126,21 +115,20 @@ function render(data) {
   renderPlan(data.plan || {});
   renderSignals(data.signals || []);
 
-  const score = calculateEvidenceScore(data);
+  const score = data.repository_score;
   const comment = scoreComment(score);
-  $("scoreNumber").innerHTML = score === null ? `—<span>/10</span>` : `${score.toFixed(1)}<span>/10</span>`;
+  $("scoreNumber").innerHTML = score == null ? `—<span>/10</span>` : `${score.toFixed(1)}<span>/10</span>`;
   $("scoreSticker").textContent = comment.sticker;
-  if (score === null) {
-    const hasRealPostings = Number(data.postings?.evidence_count) > 0;
-    const hasMarketSkillMatches = (data.skill_matrix || []).some(
-      (row) => row.detectable && Number(row.total_postings) > 0 && Number(row.postings_mentioning) > 0
-    );
-    $("scoreExplanation").textContent = hasRealPostings && !hasMarketSkillMatches
-      ? "No score: the real postings did not match the configured role skills, so a role-specific comparison is not available. Repository checks remain visible below."
-      : "No score: real job-posting evidence is needed for this role. Synthetic samples and repository hygiene alone cannot support a role-specific score.";
+  if (score == null) {
+    $("scoreExplanation").textContent = comment.explanation;
   } else {
-    $("scoreExplanation").textContent = `${comment.explanation} Score rubric: 70% role-weighted evidence for skills mentioned in real postings + 30% repository checks. This is a simple UI heuristic, not an employer rating.`;
+    $("scoreExplanation").textContent =
+      `${comment.explanation} This score is based on detectable role skills found in inspected repository files. It does not depend on job postings, ` +
+      "and missing repository evidence does not establish that you lack a skill.";
   }
+  $("marketStatus").textContent = data.market_comparison_available
+    ? `Market comparison available · ${data.real_posting_count} real job postings`
+    : `Market comparison unavailable — ${data.real_posting_count} real job posting(s); at least 10 and matched role skills are required.`;
   $("results").hidden = false;
 }
 
@@ -163,6 +151,7 @@ $("form").addEventListener("submit", async (event) => {
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || "The review could not be completed. Please try again.");
+    latestRedmarginReview = data;
     setStatus("Review complete. Read the evidence before acting on any recommendation.");
     render(data);
     $("results").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -176,61 +165,10 @@ $("form").addEventListener("submit", async (event) => {
 
 loadRoles();
 
-// Redmargin help widget
-const helpAnswers = {
-  start: "Paste a public GitHub repository URL, choose your target role, and set your available hours per day. You can optionally paste job descriptions, then click “Mark my repo.” The current preview uses sample data rather than a live repository analysis.",
-
-  score: "The score summarizes repository evidence against the review rubric. It is not a hiring prediction or a measure of your personal ability. In the current preview, the score is illustrative demo content.",
-
-  evidence: "“Not found” means the review could not detect evidence in the inspected files. It does not mean you lack the skill. If you have relevant experience, add a verifiable project example, test, documentation, or demo. Some skills may need human review.",
-
-  plan: "Start with the highest-priority task that fits your available time. Each revision should explain why it matters and give concrete steps. Treat hour estimates as planning guides, and prioritize making your project easier to reproduce, verify, and understand.",
-
-  privacy: "Redmargin is designed to inspect repository files without running unknown project code. This visual preview uses illustrative sample data; it does not connect to a live reviewer backend, change your repository, or perform a real analysis."
-};
-
-function addHelpMessage(message, who = "bot") {
-  const node = document.createElement("div");
-  node.className = "help-message" + (who === "user" ? " user" : "");
-
-  const paragraph = document.createElement("p");
-  paragraph.textContent = message;
-
-  node.appendChild(paragraph);
-  $("helpMessages").appendChild(node);
-  $("helpMessages").scrollTop = $("helpMessages").scrollHeight;
-}
-
-function answerHelp(question) {
-  const q = question.toLowerCase();
-
-  if (/score|grade|mark|rating|\b10\b/.test(q)) {
-    return helpAnswers.score;
-  }
-
-  if (/not found|missing|gap|skill|evidence/.test(q)) {
-    return helpAnswers.evidence;
-  }
-
-  if (/plan|priority|next|what should|improve|fix/.test(q)) {
-    return helpAnswers.plan;
-  }
-
-  if (/privacy|safe|execute|run my code|change my repo|security/.test(q)) {
-    return helpAnswers.privacy;
-  }
-
-  if (/start|begin|use|review|github|repo/.test(q)) {
-    return helpAnswers.start;
-  }
-
-  return "I can help with starting a review, understanding your score, evidence gaps, your revision plan, and repository safety. Try one of the suggested topics above. This prototype does not have a live AI chat agent connected yet.";
-}
-
 function openHelp() {
   $("helpPanel").hidden = false;
   $("helpLauncher").setAttribute("aria-expanded", "true");
-  $("helpInput").focus();
+  $("agent-goal").focus();
 }
 
 function closeHelp() {
@@ -249,25 +187,143 @@ $("helpLauncher").addEventListener("click", () => {
 
 $("helpClose").addEventListener("click", closeHelp);
 
-$("helpOptions").addEventListener("click", (event) => {
-  const button = event.target.closest("button[data-help]");
-  if (!button) return;
+const agentButton = $("agent-send");
 
-  addHelpMessage(button.textContent, "user");
-  addHelpMessage(helpAnswers[button.dataset.help]);
-});
+if (agentButton) {
+  agentButton.addEventListener("click", async () => {
+    const goalInput = $("agent-goal");
+    const hoursInput = $("agent-hours");
+    const status = $("agent-status");
+    const results = $("agent-results");
+    const roleSelect = $("role");
+    const review = latestRedmarginReview || {};
+    const message = goalInput.value.trim();
 
-$("helpForm").addEventListener("submit", (event) => {
-  event.preventDefault();
+    if (!message) {
+      status.textContent = "Tell me what you want to learn or build.";
+      goalInput.focus();
+      return;
+    }
 
-  const input = $("helpInput");
-  const question = input.value.trim();
+    agentButton.disabled = true;
+    status.textContent = "Building your learning and project roadmap...";
+    results.replaceChildren();
 
-  if (!question) return;
+    try {
+      const response = await fetch("/api/help", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message,
+          role_id: review.role?.id || roleSelect?.value || "nlp",
+          available_hours_per_day: Number(hoursInput.value) || 2,
+          missing_skills: (review.skill_matrix || [])
+            .filter((skill) => skill.detectable && skill.status === "gap")
+            .map((skill) => skill.id),
+          evidence_summary: [
+            review.critique?.summary,
+            ...(review.skill_matrix || [])
+              .filter((skill) => skill.detectable
+                && (skill.status === "gap" || skill.evidence_status === "evidence_found"))
+              .slice(0, 20)
+              .map((skill) => {
+                if (skill.status === "gap") {
+                  return `${skill.label}: no matching evidence found in inspected files.`;
+                }
+                const files = (skill.evidence || []).join(", ");
+                return `${skill.label}: evidence found${files ? ` in ${files}` : ""}.`;
+              })
+          ].filter(Boolean).join("\n").slice(0, 5000)
+        })
+      });
 
-  addHelpMessage(question, "user");
-  addHelpMessage(answerHelp(question));
+      const data = await response.json();
+      if (!response.ok) {
+        const detail = typeof data.detail === "string"
+          ? data.detail
+          : "The agent request failed. Check the inputs and try again.";
+        throw new Error(detail);
+      }
 
-  input.value = "";
-  input.focus();
-});
+      renderAgentRoadmap(data, results);
+      status.textContent = "Roadmap ready.";
+    } catch (error) {
+      status.textContent = error.message || "Unable to contact the agent.";
+    } finally {
+      agentButton.disabled = false;
+    }
+  });
+}
+
+function renderAgentRoadmap(data, container) {
+  const appendText = (tag, text, parent = container) => {
+    const element = document.createElement(tag);
+    element.textContent = text;
+    parent.appendChild(element);
+    return element;
+  };
+
+  appendText("h3", data.project.title);
+  appendText("p", `Target role: ${data.role.label} · Skill: ${data.recommended_skill.label}`);
+  appendText("p", data.project.why);
+  appendText(
+    "p",
+    `Estimated effort: ${data.project.estimated_hours} hours. ` +
+    `At your pace: about ${data.project.estimated_days_at_available_pace} days.`
+  );
+  const reviewContext = data.repository_context || {};
+  if (reviewContext.evidence_summary || (reviewContext.missing_skills || []).length) {
+    appendText("h4", "From your repository review");
+    if (reviewContext.evidence_summary) {
+      appendText("p", reviewContext.evidence_summary);
+    }
+    if ((reviewContext.missing_skills || []).length) {
+      appendText(
+        "p",
+        `Detected review gaps: ${reviewContext.missing_skills
+          .map((skill) => skill.replace(/_/g, " "))
+          .join(", ")}. These are missing repository evidence, not proof you lack the skills.`
+      );
+    }
+    if (reviewContext.note) appendText("p", reviewContext.note);
+  }
+  appendText("h4", "Implementation roadmap");
+
+  const taskList = document.createElement("ol");
+  for (const task of data.project.tasks) {
+    const item = document.createElement("li");
+    appendText("strong", `${task.name} (${task.hours} hours)`, item);
+    appendText("p", `${task.required ? "Essential" : "Optional"} — ${task.deliverable}`, item);
+    taskList.appendChild(item);
+  }
+  container.appendChild(taskList);
+
+  appendText("h4", "Learning resources");
+  const resourceList = document.createElement("ul");
+  for (const resource of data.resources) {
+    const item = document.createElement("li");
+    const link = document.createElement("a");
+    link.textContent = resource.title;
+    try {
+      const url = new URL(resource.url);
+      if (url.protocol !== "https:" && url.protocol !== "http:") continue;
+      link.href = url.href;
+    } catch {
+      continue;
+    }
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    item.appendChild(link);
+    appendText("p", resource.description, item);
+    resourceList.appendChild(item);
+  }
+  container.appendChild(resourceList);
+
+  appendText("h4", "What makes this resume-worthy?");
+  const resumeList = document.createElement("ul");
+  for (const evidence of data.resume_evidence) {
+    appendText("li", evidence, resumeList);
+  }
+  container.appendChild(resumeList);
+  appendText("p", data.limitations.join(" "));
+}

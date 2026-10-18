@@ -1,6 +1,6 @@
 import math
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from . import config
 from .github_client import RepoError, parse_repo_url
@@ -61,6 +61,14 @@ class ReviewRequest(RepositoryRoleRequest):
                 f"{config.MAX_PASTED_POSTINGS_CHARS}-character limit."
             )
         return self
+
+
+class ReviewResponse(BaseModel):
+    repository_score: float | None
+    market_comparison_available: bool
+    real_posting_count: int = Field(ge=0)
+
+    model_config = ConfigDict(extra="allow")
 
 
 class InterviewRequest(RepositoryRoleRequest):
@@ -160,3 +168,24 @@ class JudgeResponse(BaseModel):
     weighted_range: dict[str, float]
     source: str
     llm_error: str | None = None
+
+
+class AgentHelpRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    role_id: str = "nlp"
+    available_hours_per_day: float = Field(default=2, ge=0.5, le=16)
+    missing_skills: list[str] = Field(default_factory=list, max_length=100)
+    evidence_summary: str = Field(default="", max_length=5000)
+
+
+class AgentHelpResponse(BaseModel):
+    agent_name: str
+    intent: str
+    role: dict
+    goal: str
+    recommended_skill: dict
+    project: dict
+    resources: list[dict]
+    resume_evidence: list[str]
+    repository_context: dict
+    limitations: list[str]

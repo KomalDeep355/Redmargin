@@ -10,7 +10,7 @@ from dataclasses import asdict
 from . import llm, prompts
 from .github_client import RepoSnapshot, fetch_snapshot
 from .planner import build_plan
-from .postings import gather_postings, get_role
+from .postings import MIN_MARKET_POSTINGS, gather_postings, get_role
 from .schemas import ReviewRequest
 from .signals import Signal, compute_signals
 from .skills import build_skill_matrix
@@ -23,6 +23,17 @@ def is_valid_evidence(ev: str, tree: set[str], signal_names: set[str], skill_ids
     if ev.startswith("skill:"):
         return ev[6:] in skill_ids
     return ev in tree
+
+
+def calculate_repository_score(skill_matrix: list[dict]) -> float | None:
+    """Score detectable repository skill evidence independently of job-market data."""
+    assessed = [item for item in skill_matrix if item.get("detectable") is True]
+    evidence_found = sum(
+        item.get("evidence_status") == "evidence_found"
+        or (item.get("evidence_status") is None and bool(item.get("in_repo")))
+        for item in assessed
+    )
+    return round(10 * evidence_found / len(assessed), 1) if assessed else None
 
 
 def _validate_items(items, tree, signal_names, skill_ids) -> tuple[list[dict], int]:
@@ -87,7 +98,16 @@ def rule_based_critique(role_label: str, signals: dict[str, Signal], matrix: lis
         and r.get("postings_mentioning", 0) > 0
         for r in matrix
     )
-    if market_available:
+    total_postings = max((r.get("total_postings", 0) for r in matrix), default=0)
+    if total_postings < MIN_MARKET_POSTINGS:
+        summary = (
+            f"For {role_label}, market demand could not be assessed confidently: only "
+            f"{total_postings} real job posting(s) were available; at least "
+            f"{MIN_MARKET_POSTINGS} are needed for a market comparison. "
+            "Repository evidence is reported separately, and market-based skill gaps and demand "
+            "estimates are not assessed."
+        )
+    elif market_available:
         summary = (
             f"For {role_label}, {gaps} in-demand skill(s) have no matching "
             f"evidence in this repo. Closing the listed fixes is roughly "
@@ -114,7 +134,7 @@ async def generate_critique(snap: RepoSnapshot, role_label: str, signals, matrix
     signal_names = set(signals)
     skill_ids = {r["id"] for r in matrix}
 
-    market_skill_data_available = total_postings > 0 and any(
+    market_skill_data_available = total_postings >= MIN_MARKET_POSTINGS and any(
         row.get("postings_mentioning", 0) > 0 and row.get("pct") is not None
         for row in matrix
     )
@@ -125,6 +145,8 @@ async def generate_critique(snap: RepoSnapshot, role_label: str, signals, matrix
             "source": (
                 "rule-based (no real postings)"
                 if total_postings == 0
+                else "rule-based (insufficient market data)"
+                if total_postings < MIN_MARKET_POSTINGS
                 else "rule-based (no matched role skills)"
             ),
             "llm_error": None,
@@ -206,6 +228,10 @@ async def run_review(req: ReviewRequest) -> dict:
     real_postings = context["real_postings"]
     plan = build_plan(matrix, signals, req.hours_per_day)
     critique = await generate_critique(snap, role["label"], signals, matrix, plan, len(real_postings))
+    market_comparison_available = len(real_postings) >= MIN_MARKET_POSTINGS and any(
+        row.get("postings_mentioning", 0) > 0 and row.get("pct") is not None
+        for row in matrix
+    )
 
     return {
         "repo": {
@@ -217,6 +243,9 @@ async def run_review(req: ReviewRequest) -> dict:
         "postings": postings_meta,
         "signals": [asdict(s) for s in signals.values()],
         "skill_matrix": matrix,
+        "repository_score": calculate_repository_score(matrix),
+        "market_comparison_available": market_comparison_available,
+        "real_posting_count": len(real_postings),
         "plan": plan,
         "critique": critique,
     }
