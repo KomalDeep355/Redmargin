@@ -109,6 +109,7 @@
               <h2 id="results-title">The honest verdict.</h2>
               <p id="summary" class="summary"></p>
               <p id="scoreExplanation" class="score-explanation">This is a transparent repo-evidence heuristic, not a hiring prediction or a measure of your personal ability.</p>
+              <p id="marketStatus" class="score-explanation" role="status"></p>
               <div id="source" class="source-line"></div>
             </div>
             <div class="grade-scribble" aria-hidden="true">✎</div>
@@ -117,8 +118,8 @@
             <div class="rubric-top"><span>THE RUBRIC</span><span>01—04</span></div>
             <h3>How we mark it</h3>
             <ul class="rubric-list">
-              <li><span class="rubric-score">70%</span><span><b>Role-weighted skill evidence</b><small>Only skills mentioned in real postings for the selected role; score is withheld when this evidence is unavailable.</small></span></li>
-              <li><span class="rubric-score">30%</span><span><b>Repo checks</b><small>Signals returned by the review, such as expected project hygiene.</small></span></li>
+              <li><span class="rubric-score">10</span><span><b>Repository skill evidence</b><small>10-point score based on the share of detectable skills for this role with evidence in inspected repository files.</small></span></li>
+              <li><span class="rubric-score">—</span><span><b>Market comparison</b><small>Posting demand and role-specific gaps are shown separately and require enough real postings.</small></span></li>
             </ul>
             <div class="rubric-caveat">A missing signal means “not found in this review,” not “you don't know this skill.”</div>
           </aside>
@@ -185,8 +186,8 @@
         <div class="help-avatar" aria-hidden="true">✎</div>
         <div>
           <div class="help-eyebrow">REDMARGIN HELP DESK</div>
-          <h2>How can I help?</h2>
-          <p>Your friendly red pen, minus the judgement.</p>
+          <h2>How may I help?</h2>
+          <p>Learn a skill. Improve your project. Build evidence for your target role.</p>
         </div>
       </div>
       <button
@@ -197,35 +198,22 @@
       >×</button>
     </div>
 
-    <div id="helpMessages" class="help-messages" aria-live="polite">
-      <div class="help-message">
-        <p>Hey, builder! 👋 What are you working through?</p>
-        <p>I can explain the review, the score, evidence gaps, or your revision plan.</p>
-      </div>
-    </div>
+    <div id="agent-panel" class="agent-panel">
+      <label for="agent-goal">What do you want to achieve?</label>
+      <textarea
+        id="agent-goal"
+        rows="3"
+        maxlength="4000"
+        placeholder="Example: I want to learn LLMs and add an LLM feature to my NLP project."
+      ></textarea>
 
-    <div class="help-options" id="helpOptions">
-      <button type="button" data-help="start">How do I start a review?</button>
-      <button type="button" data-help="score">What does my score mean?</button>
-      <button type="button" data-help="evidence">Why is a skill marked not found?</button>
-      <button type="button" data-help="plan">Help me understand the revision plan</button>
-      <button type="button" data-help="privacy">Is my code executed or changed?</button>
-    </div>
+      <label for="agent-hours">Hours available per day</label>
+      <input id="agent-hours" type="number" min="0.5" max="16" step="0.5" value="2">
 
-    <form id="helpForm" class="help-form">
-      <input
-        id="helpInput"
-        type="text"
-        placeholder="Ask a quick question…"
-        aria-label="Ask Redmargin help"
-        maxlength="500"
-        autocomplete="off"
-      >
-      <button class="help-send" type="submit" aria-label="Send question">↗</button>
-    </form>
+      <button id="agent-send" class="help-send agent-send" type="button">Build my roadmap</button>
 
-    <div class="help-footnote">
-      Quick-help mode: answers are built into this prototype, not a live AI agent yet.
+      <p id="agent-status" role="status" aria-live="polite"></p>
+      <div id="agent-results" aria-live="polite"></div>
     </div>
   </section>
 

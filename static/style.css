@@ -364,73 +364,75 @@ textarea { resize: vertical; line-height: 1.6; }
   padding: 2px 4px;
 }
 
-.help-messages {
+.agent-panel {
   overflow-y: auto;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-height: 150px;
+  padding: 14px;
 }
 
-.help-message {
-  align-self: flex-start;
-  max-width: 94%;
-  background: #f3ede4;
-  border: 1px solid #e7dccd;
-  padding: 11px 12px;
-  font-size: .8rem;
-  line-height: 1.6;
+.agent-panel label {
+  display: block;
+  margin: 0 0 6px;
+  font-size: .76rem;
+  font-weight: 700;
+}
+
+.agent-panel textarea,
+.agent-panel input {
+  margin-bottom: 13px;
+  padding: 9px 10px;
+  font-size: .76rem;
+}
+
+.agent-panel textarea {
+  min-height: 74px;
+}
+
+.agent-send {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  font-size: .76rem;
+  font-weight: 700;
+}
+
+.agent-send:disabled {
+  opacity: .65;
+  cursor: wait;
+}
+
+#agent-status {
+  min-height: 1.3em;
+  margin: 10px 0;
+  color: var(--muted);
+  font-size: .72rem;
+}
+
+#agent-results {
+  font-size: .75rem;
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
 
-.help-message.user {
-  align-self: flex-end;
-  background: var(--red-soft);
-  border-color: #edc9c2;
+#agent-results h3 {
+  margin: 14px 0 6px;
+  font: 500 1.12rem/1.2 var(--serif);
 }
 
-.help-message p {
-  margin: 0 0 7px;
+#agent-results h4 {
+  margin: 14px 0 5px;
 }
 
-.help-message p:last-child {
-  margin-bottom: 0;
+#agent-results p {
+  margin: 6px 0;
 }
 
-.help-options {
-  display: grid;
-  gap: 7px;
-  padding: 0 16px 15px;
+#agent-results ol,
+#agent-results ul {
+  padding-left: 20px;
 }
 
-.help-options button {
-  text-align: left;
-  border: 1px solid #e4d5c5;
-  background: #fffefa;
-  color: var(--ink);
-  padding: 9px 11px;
-  font-size: .75rem;
-  cursor: pointer;
-  transition: border-color .15s, background .15s;
-}
-
-.help-options button:hover {
-  border-color: var(--red);
-  background: #fff5f1;
-}
-
-.help-form {
-  display: flex;
-  gap: 7px;
-  padding: 12px;
-  border-top: 1px solid var(--rule);
-  background: #fffaf2;
-}
-
-.help-form input {
-  font-size: .77rem;
-  padding: 10px;
+#agent-results li {
+  margin: 0 0 8px;
 }
 
 .help-send {
@@ -439,14 +441,6 @@ textarea { resize: vertical; line-height: 1.6; }
   color: white;
   padding: 0 13px;
   cursor: pointer;
-}
-
-.help-footnote {
-  color: var(--muted);
-  font-size: .62rem;
-  line-height: 1.45;
-  padding: 0 14px 12px;
-  background: #fffaf2;
 }
 
 @media (max-width: 600px) {

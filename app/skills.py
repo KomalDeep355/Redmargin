@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 
 from . import config
 from .github_client import RepoSnapshot
-from .postings import get_role
+from .postings import MIN_MARKET_POSTINGS, get_role
 from .signals import Signal
 
 GAP_MIN_PCT = 0.25  # a skill is a "gap" if >=25% of postings mention it and the repo shows nothing
@@ -307,6 +307,7 @@ _STATUS_ORDER = {
     "minor_gap": 1,
     "strength": 2,
     "not_detectable": 3,
+    "market_insufficient": 4,
     "market_unavailable": 4,
     "not_mentioned": 5,
     "extra": 6,
@@ -346,15 +347,28 @@ def build_skill_matrix(
     rows = []
     for sk in taxonomy:
         n = mentions[sk["id"]]
-        pct = n / total if total else None
+        pct = n / total if total >= MIN_MARKET_POSTINGS else None
         detectable = sk.get("detectable", True)
         evidence = repo_evidence(sk, corpus, signals) if detectable else []
         in_repo = bool(evidence)
+        if not detectable:
+            evidence_status = "not_assessed"
+        elif in_repo:
+            evidence_status = "evidence_found"
+        else:
+            evidence_status = "no_evidence_found"
+        market_status = (
+            "insufficient_market_data"
+            if total < MIN_MARKET_POSTINGS
+            else "assessed"
+        )
 
-        if total == 0:
-            status = "market_unavailable"
-        elif not detectable:
+        if not detectable:
             status = "not_detectable"
+        elif total == 0:
+            status = "market_unavailable"
+        elif total < MIN_MARKET_POSTINGS:
+            status = "market_insufficient"
         elif n > 0 and in_repo:
             status = "strength"
         elif n > 0 and pct >= GAP_MIN_PCT and not in_repo:
@@ -371,7 +385,10 @@ def build_skill_matrix(
             "pct": round(pct, 3) if pct is not None else None,
             "role_weight": skill_weights[sk["id"]],
             "in_repo": in_repo, "evidence": evidence,
-            "detectable": detectable, "status": status, "fix_id": sk.get("fix_id"),
+            "detectable": detectable, "evidence_status": evidence_status,
+            "market_status": market_status,
+            "minimum_postings_for_market_assessment": MIN_MARKET_POSTINGS,
+            "status": status, "fix_id": sk.get("fix_id"),
         })
 
     rows.sort(key=lambda r: (_STATUS_ORDER[r["status"]], -(r["pct"] or 0), r["label"]))

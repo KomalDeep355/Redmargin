@@ -100,17 +100,30 @@ def _validate_bullets(raw_bullets, snap: RepoSnapshot) -> tuple[list[dict], int]
 def _deterministic_verdict(signals: dict, matrix: list[dict], snap: RepoSnapshot) -> tuple[str, str]:
     strengths = sum(row["status"] == "strength" for row in matrix)
     gaps = sum(row["status"] == "gap" for row in matrix)
+    insufficient_market = any(
+        row.get("market_status") == "insufficient_market_data" for row in matrix
+    )
     if strengths and strengths >= gaps and signals.get("has_readme") and signals["has_readme"].value:
         verdict = "strong_project_evidence"
     elif snap.files:
         verdict = "developing_project_evidence"
     else:
         verdict = "limited_project_evidence"
-    explanation = (
-        f"The inspected repository shows evidence for {strengths} role skills and no matching repository evidence "
-        f"for {gaps} high-demand skill(s). "
-        "This describes repository evidence only; it is not a verdict on the candidate."
-    )
+    if insufficient_market:
+        evidence_count = sum(
+            row.get("evidence_status") == "evidence_found" for row in matrix
+        )
+        explanation = (
+            f"The inspected repository shows evidence for {evidence_count} detectable role skill(s). "
+            "The market comparison is not assessed because fewer than 10 real postings were available. "
+            "This describes repository evidence only; it is not a verdict on the candidate."
+        )
+    else:
+        explanation = (
+            f"The inspected repository shows evidence for {strengths} role skills and no matching repository evidence "
+            f"for {gaps} high-demand skill(s). "
+            "This describes repository evidence only; it is not a verdict on the candidate."
+        )
     return verdict, explanation
 
 

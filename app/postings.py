@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from . import config
 
 SAMPLE_MARKER = "SAMPLE"
+MIN_MARKET_POSTINGS = 10
 
 
 @dataclass
@@ -112,8 +113,11 @@ def gather_postings(role_id: str, pasted: list[str]) -> tuple[list[Posting], dic
             "Paste 10–15 real postings (separate them with a line containing ---) or add .txt files to "
             f"data/postings/{role_id}/."
         )
-    elif len(postings) < 10:
-        warning = f"Only {len(postings)} postings used. 10–15 gives more reliable percentages."
+    elif len(postings) < MIN_MARKET_POSTINGS:
+        warning = (
+            f"Only {len(postings)} real posting(s) used. At least {MIN_MARKET_POSTINGS} are needed "
+            "for a market comparison; 10–15 gives more reliable percentages."
+        )
 
     metadata = {
         "count": len(postings),

@@ -44,12 +44,14 @@ URLs must be HTTPS links directly to `github.com/owner/repository`.
 
 - `data/postings/*/sample-*.txt` are **synthetic test data**. The UI warns you while they are in use. Replace them with
   10–15 real postings per role (or paste postings in the form, separated by a line with `---`).
-- Synthetic postings are disclosed but excluded from role-skill market percentages.
+- Synthetic postings are disclosed but excluded from role-skill market percentages. Fewer than 10 real postings
+  are treated as insufficient market data: repository evidence remains visible, but market-driven gaps and the
+  role score are withheld.
 - Each role in `data/roles.json` has a scoped skill list and provisional priority weights. These editorial weights affect
-  fix ranking and the transparent skill-evidence rubric; they are not learned from a dataset. The score is withheld
-  until real postings provide matched role-skill evidence.
-- Skill findings describe detectable evidence in the inspected repository only; skills such as customer communication
-  that cannot be inferred from source are marked not assessed.
+  fix ranking and the transparent skill-evidence rubric; they are not learned from a dataset. A role score requires at
+  least 10 real postings and matched role-skill evidence.
+- Skill findings distinguish evidence found, no evidence found in inspected files, skills not assessable from source,
+  and insufficient market data. Missing repository evidence is not proof that a candidate lacks a skill.
 - Fix hours in `data/fix_library.json` are rough defaults, not predictions. Edit them to match your experience.
 - Only public repos work for now.
 

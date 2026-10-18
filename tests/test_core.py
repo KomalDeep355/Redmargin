@@ -2,6 +2,7 @@ from app.github_client import RepoSnapshot, RepoError, parse_repo_url, choose_fi
 from app import config
 from app.signals import compute_signals
 from app.skills import build_skill_matrix, count_mentions, load_taxonomy
+from app.postings import MIN_MARKET_POSTINGS
 from app.planner import build_plan
 from app.reviewer import is_valid_evidence, rule_based_critique, _validate_items
 import pytest
@@ -95,10 +96,10 @@ def test_skill_dependencies_match_manifest_package_names():
         },
     )
     matrix = {row["id"]: row for row in build_skill_matrix(
-        snap, compute_signals(snap), ["React and FastAPI"], "swe"
+        snap, compute_signals(snap), ["React and FastAPI"] * MIN_MARKET_POSTINGS, "swe"
     )}
     nlp_matrix = {row["id"]: row for row in build_skill_matrix(
-        snap, compute_signals(snap), ["scikit-learn"], "nlp"
+        snap, compute_signals(snap), ["scikit-learn"] * MIN_MARKET_POSTINGS, "nlp"
     )}
     assert matrix["frontend"]["status"] == "strength"
     assert matrix["rest_apis"]["status"] == "gap"
@@ -108,9 +109,11 @@ def test_skill_dependencies_match_manifest_package_names():
 
 def test_not_detectable_skill_is_not_reported_as_missing():
     snap = make_snap([], {})
-    rows = build_skill_matrix(snap, compute_signals(snap), ["customer communication"], "fde")
+    rows = build_skill_matrix(snap, compute_signals(snap), [], "fde")
     customer_skill = next(row for row in rows if row["id"] == "customer_communication")
     assert customer_skill["status"] == "not_detectable"
+    assert customer_skill["evidence_status"] == "not_assessed"
+    assert customer_skill["market_status"] == "insufficient_market_data"
     assert not customer_skill["evidence"]
 
 
@@ -124,7 +127,7 @@ def test_rule_based_gap_is_framed_as_missing_repository_evidence():
             "status": "gap",
             "pct": 0.5,
             "postings_mentioning": 2,
-            "total_postings": 4,
+            "total_postings": MIN_MARKET_POSTINGS,
             "evidence": [],
         }],
         {"total_hours_min": 0, "total_hours_max": 0},
@@ -150,7 +153,7 @@ def test_rule_based_summary_discloses_unavailable_market_data():
         {"total_hours_min": 0, "total_hours_max": 0},
     )
 
-    assert "market demand could not be assessed" in result["summary"]
+    assert "at least 10 are needed for a market comparison" in result["summary"]
     assert "market-based skill gaps" in result["summary"]
 
 
@@ -159,9 +162,11 @@ def test_matrix_gap_strength_and_plan():
     files = {"requirements.txt": "fastapi\nhttpx\n", "main.py": "from fastapi import FastAPI"}
     snap = make_snap(tree, files)
     sig = compute_signals(snap)
-    postings = ["Python, FastAPI, Docker and pytest testing", "REST APIs, Docker, testing", "Docker, python"]
+    postings = ["Python, FastAPI, Docker and pytest testing"] * MIN_MARKET_POSTINGS
     matrix = {r["id"]: r for r in build_skill_matrix(snap, sig, postings, "swe")}
     assert matrix["rest_apis"]["status"] == "strength"
+    assert matrix["rest_apis"]["evidence_status"] == "evidence_found"
+    assert matrix["rest_apis"]["market_status"] == "assessed"
     assert matrix["docker"]["status"] == "gap" and matrix["docker"]["pct"] == 1.0
     assert matrix["testing"]["status"] == "gap"
 
@@ -171,6 +176,53 @@ def test_matrix_gap_strength_and_plan():
     assert plan["total_hours_min"] > 0
     assert all(d["hours"] <= 2.0001 for d in plan["timetable"])
     assert abs(sum(d["hours"] for d in plan["timetable"]) - sum(f["hours_avg"] for f in plan["fixes"])) < 0.05
+
+
+def test_small_posting_sample_does_not_create_market_gaps_or_fixes():
+    snap = make_snap(["src/main.py"], {"src/main.py": "print('hello')"})
+    signals = compute_signals(snap)
+    matrix = build_skill_matrix(snap, signals, ["Python, Docker, and testing"], "swe")
+    by_id = {row["id"]: row for row in matrix}
+
+    assert by_id["docker"]["evidence_status"] == "no_evidence_found"
+    assert by_id["docker"]["market_status"] == "insufficient_market_data"
+    assert by_id["docker"]["status"] == "market_insufficient"
+    assert by_id["docker"]["pct"] is None
+    assert not any(row["status"] == "gap" for row in matrix)
+    plan = build_plan(matrix, signals)
+    assert not any(
+        "postings mention" in reason
+        for fix in plan["fixes"]
+        for reason in fix["reasons"]
+    )
+
+
+def test_same_data_science_repository_is_assessed_differently_by_role():
+    snap = make_snap(
+        ["src/model.py", "requirements.txt", "tests/test_model.py"],
+        {
+            "src/model.py": "import pandas as pd\nfrom sklearn.model_selection import train_test_split",
+            "requirements.txt": "pandas\nscikit-learn\nscipy\n",
+        },
+    )
+    signals = compute_signals(snap)
+    postings = [
+        "Python, pandas, scikit-learn, statistics, REST APIs, automated testing"
+    ] * MIN_MARKET_POSTINGS
+    data_scientist = {
+        row["id"]: row for row in build_skill_matrix(snap, signals, postings, "data_scientist")
+    }
+    software_engineer = {
+        row["id"]: row for row in build_skill_matrix(snap, signals, postings, "swe")
+    }
+
+    assert data_scientist["data_analysis"]["status"] == "strength"
+    assert data_scientist["ml_frameworks"]["status"] == "strength"
+    assert data_scientist["statistics_experimentation"]["role_weight"] == 1.0
+    assert "data_analysis" not in software_engineer
+    assert software_engineer["testing"]["status"] == "strength"
+    assert software_engineer["testing"]["role_weight"] == 1.0
+    assert data_scientist["python"]["role_weight"] != software_engineer["python"]["role_weight"]
 
 
 def test_evidence_validation_drops_invented_claims():

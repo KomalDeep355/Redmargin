@@ -91,7 +91,11 @@ def test_sample_postings_do_not_feed_market_skill_percentages(monkeypatch):
     assert context["postings_meta"]["using_sample_postings"]
     assert context["matrix"]
     assert all(row["total_postings"] == 0 for row in context["matrix"])
-    assert all(row["pct"] is None and row["status"] == "market_unavailable" for row in context["matrix"])
+    assert all(row["pct"] is None for row in context["matrix"])
+    assert all(
+        row["status"] == ("not_detectable" if not row["detectable"] else "market_unavailable")
+        for row in context["matrix"]
+    )
 
     data_scientist = asyncio.run(prepare_analysis("https://github.com/a/b", "data_scientist"))
     assert {row["id"] for row in context["matrix"]} != {
@@ -338,13 +342,13 @@ def test_critique_counts_findings_separately_from_strengths_and_falls_back(monke
     matrix = [{
         "id": "testing",
         "label": "Automated testing",
-        "total_postings": 1,
-        "postings_mentioning": 1,
+        "total_postings": 10,
+        "postings_mentioning": 10,
         "pct": 1.0,
         "evidence": [],
         "status": "gap",
     }]
-    critique = asyncio.run(generate_critique(snap, "Engineer", {}, matrix, {}, 1))
+    critique = asyncio.run(generate_critique(snap, "Engineer", {}, matrix, {}, 10))
     assert critique["evidence_check"]["findings_total"] == 1
     assert critique["evidence_check"]["findings_kept"] == 1
     assert critique["evidence_check"]["strengths_total"] == 1
@@ -357,7 +361,7 @@ def test_critique_counts_findings_separately_from_strengths_and_falls_back(monke
     monkeypatch.setattr("app.reviewer.llm.complete_json", fail_complete)
     fallback = asyncio.run(
         generate_critique(
-            snap, "Engineer", {}, matrix, {"total_hours_min": 0, "total_hours_max": 0}, 1
+            snap, "Engineer", {}, matrix, {"total_hours_min": 0, "total_hours_max": 0}, 10
         )
     )
     assert fallback["source"] == "rule-based (LLM failed)"
@@ -597,7 +601,23 @@ def test_feature_endpoints_are_wired_with_typed_responses(monkeypatch):
                     "criteria": [{"name": "Design", "weight": 100}],
                 },
             )
-            return interview_response, resume_response, judge_response
+            help_response = await client.post(
+                "/api/help",
+                json={
+                    "message": "Help me build an NLP evaluation project",
+                    "role_id": "nlp",
+                    "available_hours_per_day": 3,
+                    "missing_skills": ["evals"],
+                    "evidence_summary": "No evaluation code found.",
+                },
+            )
+            invalid_help_response = await client.post("/api/help", json={"message": ""})
+            return interview_response, resume_response, judge_response, help_response, invalid_help_response
 
     responses = asyncio.run(call_endpoints())
-    assert all(response.status_code == 200 for response in responses)
+    assert all(response.status_code == 200 for response in responses[:4])
+    help_result = responses[3].json()
+    assert help_result["agent_name"] == "Redmargin Project Mentor"
+    assert help_result["role"]["id"] == "nlp"
+    assert help_result["repository_context"]["missing_skills"] == ["evals"]
+    assert responses[4].status_code == 422

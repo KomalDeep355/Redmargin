@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import config, llm
+from .agent import build_help_response
 from .github_client import RepoError, fetch_snapshot
 from .interview import generate_interview_questions
 from .judge import judge_project
@@ -12,6 +13,8 @@ from .postings import load_roles, load_stored_postings
 from .resume_verdict import resume_verdict
 from .reviewer import prepare_analysis, run_review
 from .schemas import (
+    AgentHelpRequest,
+    AgentHelpResponse,
     InterviewRequest,
     InterviewResponse,
     JudgeRequest,
@@ -19,6 +22,7 @@ from .schemas import (
     ResumeVerdictRequest,
     ResumeVerdictResponse,
     ReviewRequest,
+    ReviewResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -73,7 +77,21 @@ async def roles():
     return out
 
 
-@app.post("/api/review")
+@app.post("/api/help", response_model=AgentHelpResponse)
+def agent_help(request: AgentHelpRequest):
+    try:
+        return build_help_response(
+            message=request.message,
+            role_id=request.role_id,
+            available_hours_per_day=request.available_hours_per_day,
+            missing_skills=request.missing_skills,
+            evidence_summary=request.evidence_summary,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/review", response_model=ReviewResponse)
 async def review(req: ReviewRequest):
     try:
         return await run_review(req)

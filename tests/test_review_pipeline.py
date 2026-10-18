@@ -6,8 +6,9 @@ from fastapi import HTTPException
 
 from app import config, main
 from app.github_client import RepoSnapshot
-from app.reviewer import prepare_analysis
-from app.schemas import ReviewRequest
+from app.reviewer import calculate_repository_score, prepare_analysis
+from app.schemas import ReviewRequest, ReviewResponse
+from app.postings import MIN_MARKET_POSTINGS
 
 
 def make_snapshot():
@@ -57,17 +58,45 @@ def test_sample_only_review_has_no_market_based_score_inputs_or_findings(monkeyp
     result = asyncio.run(
         main.review(ReviewRequest(repo_url="https://github.com/example/project", role="swe"))
     )
-
     assert result["postings"]["using_sample_postings"]
     assert result["postings"]["evidence_count"] == 0
     assert result["postings"]["sample_count"] > 0
-    assert all(row["status"] == "market_unavailable" for row in result["skill_matrix"])
+    assert result["repository_score"] is not None
+    assert result["market_comparison_available"] is False
+    assert result["real_posting_count"] == 0
+    response = ReviewResponse.model_validate(result).model_dump()
+    assert response["repository_score"] == result["repository_score"]
+    assert response["skill_matrix"] == result["skill_matrix"]
+    assert all(
+        row["market_status"] == "insufficient_market_data"
+        for row in result["skill_matrix"]
+    )
+    assert all(
+        row["status"] == ("not_detectable" if not row["detectable"] else "market_unavailable")
+        for row in result["skill_matrix"]
+    )
     assert all(row["pct"] is None for row in result["skill_matrix"])
     assert "market demand could not be assessed" in result["critique"]["summary"]
     assert not any(
         finding["title"].startswith("No repository evidence found")
         for finding in result["critique"]["findings"]
     )
+
+
+def test_repository_score_uses_only_assessed_repository_evidence():
+    score = calculate_repository_score([
+        {"detectable": True, "evidence_status": "evidence_found"},
+        {"detectable": True, "evidence_status": "no_evidence_found"},
+        {"detectable": False, "evidence_status": "not_assessed"},
+    ])
+
+    assert score == 5.0
+
+
+def test_repository_score_is_explicitly_unavailable_without_assessed_skills():
+    assert calculate_repository_score([
+        {"detectable": False, "evidence_status": "not_assessed"},
+    ]) is None
 
 
 def test_review_with_no_postings_returns_clear_client_error(monkeypatch, tmp_path):
@@ -97,14 +126,17 @@ def test_review_with_real_posting_produces_market_data_and_supported_gap(monkeyp
     result = asyncio.run(main.review(ReviewRequest(
         repo_url="https://github.com/example/project",
         role="swe",
-        pasted_postings=[posting],
+        pasted_postings=[posting] * MIN_MARKET_POSTINGS,
     )))
 
-    assert result["postings"]["evidence_count"] == 1
+    assert result["postings"]["evidence_count"] == MIN_MARKET_POSTINGS
     assert result["postings"]["sample_count"] == 0
-    assert all(row["total_postings"] == 1 for row in result["skill_matrix"])
+    assert result["real_posting_count"] == MIN_MARKET_POSTINGS
+    assert result["market_comparison_available"] is True
+    assert isinstance(result["repository_score"], float)
+    assert all(row["total_postings"] == MIN_MARKET_POSTINGS for row in result["skill_matrix"])
     testing = next(row for row in result["skill_matrix"] if row["id"] == "testing")
-    assert testing["postings_mentioning"] == 1
+    assert testing["postings_mentioning"] == MIN_MARKET_POSTINGS
     assert testing["pct"] == 1.0
     assert testing["status"] == "gap"
     assert any(
@@ -113,6 +145,34 @@ def test_review_with_real_posting_produces_market_data_and_supported_gap(monkeyp
     )
     expected_gap_count = sum(row["status"] == "gap" for row in result["skill_matrix"])
     assert f"{expected_gap_count} in-demand skill(s)" in result["critique"]["summary"]
+
+
+def test_few_real_postings_are_disclosed_without_confident_gaps(monkeypatch):
+    async def fake_fetch(_url):
+        return make_snapshot()
+
+    async def unexpected_llm_call(*_args):
+        raise AssertionError("LLM must not produce market claims with insufficient postings")
+
+    monkeypatch.setattr("app.reviewer.fetch_snapshot", fake_fetch)
+    monkeypatch.setattr("app.reviewer.llm.complete_json", unexpected_llm_call)
+    result = asyncio.run(main.review(ReviewRequest(
+        repo_url="https://github.com/example/project",
+        role="swe",
+        pasted_postings=["Python, REST APIs, SQL, unit tests, and Docker."],
+    )))
+
+    assert result["postings"]["evidence_count"] == 1
+    assert result["real_posting_count"] == 1
+    assert result["market_comparison_available"] is False
+    assert "at least 10 are needed for a market comparison" in result["critique"]["summary"]
+    assert result["critique"]["source"] == "rule-based (insufficient market data)"
+    assert all(row["market_status"] == "insufficient_market_data" for row in result["skill_matrix"])
+    assert not any(row["status"] == "gap" for row in result["skill_matrix"])
+    assert not any(
+        finding["title"].startswith("No repository evidence found")
+        for finding in result["critique"]["findings"]
+    )
 
 
 def test_real_postings_without_role_skill_matches_do_not_claim_zero_market_gaps(monkeypatch):
@@ -127,10 +187,13 @@ def test_real_postings_without_role_skill_matches_do_not_claim_zero_market_gaps(
     result = asyncio.run(main.review(ReviewRequest(
         repo_url="https://github.com/example/project",
         role="swe",
-        pasted_postings=["Seeking a curious person for a collaborative and exciting opportunity."],
+        pasted_postings=[
+            "Seeking a curious person for a collaborative and exciting opportunity."
+        ] * MIN_MARKET_POSTINGS,
     )))
 
-    assert result["postings"]["evidence_count"] == 1
+    assert result["postings"]["evidence_count"] == MIN_MARKET_POSTINGS
+    assert result["market_comparison_available"] is False
     assert all(row["postings_mentioning"] == 0 for row in result["skill_matrix"])
     assert "none matched the configured role skills" in result["critique"]["summary"]
     assert result["critique"]["source"] == "rule-based (no matched role skills)"
